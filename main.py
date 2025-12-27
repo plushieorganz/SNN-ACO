@@ -10,7 +10,16 @@ from aco import AntColonyOptimizer
 from config import ExperimentConfig
 from data import build_dataloaders
 from train import evaluate_model, train_model
-from visualize import plot_training_histories
+from visualize import plot_confusion_matrix, plot_training_histories
+
+
+def print_confusion_matrix(cm, labels: tuple[str, str] = ("bird", "drone"), title: str = "Confusion matrix"):
+    print(f"{title}:")
+    print(f"            pred {labels[0]:>6} pred {labels[1]:>6}")
+    for idx, label in enumerate(labels):
+        row = cm[idx]
+        print(f" actual {label:<5} {row[0]:>10} {row[1]:>10}")
+    print()
 
 
 def run_baseline(cfg: ExperimentConfig):
@@ -31,6 +40,10 @@ def run_baseline(cfg: ExperimentConfig):
         device=cfg.train.device,
         timesteps=cfg.snn.timesteps,
     )
+    cm = test_metrics.get("confusion_matrix")
+    if cm is not None:
+        print_confusion_matrix(cm, title="Baseline test confusion matrix")
+        plot_confusion_matrix(cm, title="Baseline test confusion matrix", out_path="plots/baseline_confusion.png")
     baseline_summary = {
         "train": train_metrics,
         "val": val_metrics,
@@ -71,6 +84,10 @@ def run_hybrid(cfg: ExperimentConfig, train_loader, val_loader, test_loader, bes
         device=cfg.train.device,
         timesteps=cfg.snn.timesteps,
     )
+    cm = test_metrics.get("confusion_matrix")
+    if cm is not None:
+        print_confusion_matrix(cm, title="Hybrid test confusion matrix")
+        plot_confusion_matrix(cm, title="Hybrid test confusion matrix", out_path="plots/hybrid_confusion.png")
     hybrid_summary = {
         "train": train_metrics,
         "val": val_metrics,
@@ -121,12 +138,14 @@ def main():
     }
     print("\n=== Comparison (baseline vs hybrid) ===")
     print(json.dumps(comparison, indent=2))
-    # Compact summary for quick read
+    # Compact summary for quick read  
     b, h = baseline_summary["val"], hybrid_summary["val"]
     print(
         "\nSummary (val): "
-        f"baseline acc {b['acc']:.3f}, f1 {b['f1']:.3f}, spk/sample {b['spk_per_sample']:.3f} | "
-        f"hybrid acc {h['acc']:.3f}, f1 {h['f1']:.3f}, spk/sample {h['spk_per_sample']:.3f}"
+        f"baseline acc {b['acc']:.3f}, prec {b['precision']:.3f}, rec {b['recall']:.3f}, "
+        f"f1 {b['f1']:.3f}, spk/sample {b['spk_per_sample']:.3f} | "
+        f"hybrid acc {h['acc']:.3f}, prec {h['precision']:.3f}, rec {h['recall']:.3f}, "
+        f"f1 {h['f1']:.3f}, spk/sample {h['spk_per_sample']:.3f}"
     )
     # Percentage improvements (hybrid vs baseline); spikes reported as reduction
     def pct_change(new, old):

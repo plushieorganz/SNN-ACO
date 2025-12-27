@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from config import ExperimentConfig
-from metrics import compute_classification_metrics
+from metrics import compute_classification_metrics, compute_confusion_matrix
 from models import SpikingConvNet
 
 
@@ -29,16 +29,21 @@ def run_epoch(
     log_interval: int,
     train: bool = True,
     max_batches: int | None = None,
-) -> Dict[str, float]:
+    collect_confusion: bool = False,
+    num_classes: int = 2,
+) -> Dict[str, float | list[list[int]]]:
     criterion = nn.CrossEntropyLoss()
     model.train(train)
     total_loss = 0.0
     total_acc = 0.0
+    total_precision = 0.0
+    total_recall = 0.0
     total_f1 = 0.0
     total_spikes = 0.0
     total_samples = 0
     processed_batches = 0
     first_val_logged = False
+    confusion = torch.zeros((num_classes, num_classes), dtype=torch.int64) if collect_confusion else None
     for batch_idx, (x, y) in enumerate(loader):
         x = x.to(device)
         y = y.to(device)
@@ -63,6 +68,8 @@ def run_epoch(
             batch_size = y.size(0)
             total_loss += loss.item() * batch_size
             total_acc += metrics["acc"] * batch_size
+            total_precision += metrics["precision"] * batch_size
+            total_recall += metrics["recall"] * batch_size
             total_f1 += metrics["f1"] * batch_size
             spk_metric = extras.get("spk_per_sample", 0.0)
             total_spikes += spk_metric * batch_size
@@ -85,13 +92,25 @@ def run_epoch(
         if train and (batch_idx + 1) % log_interval == 0:
             print(
                 f"[train] batch {batch_idx+1}/{len(loader)} "
-                f"loss={loss.item():.4f} acc={metrics['acc']:.3f} f1={metrics['f1']:.3f} "
+                f"loss={loss.item():.4f} acc={metrics['acc']:.3f} "
+                f"prec={metrics['precision']:.3f} rec={metrics['recall']:.3f} f1={metrics['f1']:.3f} "
                 f"spk/sample={extras.get('spike_count', 0.0):.1f}"
             )
+        if collect_confusion:
+            preds = torch.argmax(logits, dim=1)
+            confusion += compute_confusion_matrix(preds, y, num_classes=num_classes)
         if max_batches is not None and (batch_idx + 1) >= max_batches:
             break
     if total_samples == 0:
-        return {"loss": 0.0, "acc": 0.0, "f1": 0.0, "spk_per_sample": 0.0}
+        metrics: Dict[str, float | list[list[int]]] = {
+            "loss": 0.0,
+            "acc": 0.0,
+            "f1": 0.0,
+            "spk_per_sample": 0.0,
+        }
+        if confusion is not None:
+            metrics["confusion_matrix"] = confusion.tolist()
+        return metrics
     if not train:
         # Validation summary debug
         spk_per_sample = total_spikes / total_samples
@@ -100,12 +119,17 @@ def run_epoch(
             f"samples={total_samples}, total spikes={total_spikes:.1f}, "
             f"spikes/sample={spk_per_sample:.3f}"
         )
-    return {
+    metrics: Dict[str, float | list[list[int]]] = {
         "loss": total_loss / total_samples,
         "acc": total_acc / total_samples,
+        "precision": total_precision / total_samples,
+        "recall": total_recall / total_samples,
         "f1": total_f1 / total_samples,
         "spk_per_sample": total_spikes / total_samples,
     }
+    if confusion is not None:
+        metrics["confusion_matrix"] = confusion.tolist()
+    return metrics
 
 
 def train_model(
@@ -157,10 +181,12 @@ def train_model(
         )
         print(
             f" train loss={train_metrics['loss']:.4f} acc={train_metrics['acc']:.3f} "
+            f"prec={train_metrics['precision']:.3f} rec={train_metrics['recall']:.3f} "
             f"f1={train_metrics['f1']:.3f} spk={train_metrics['spk_per_sample']:.1f}"
         )
         print(
             f"  val loss={val_metrics['loss']:.4f} acc={val_metrics['acc']:.3f} "
+            f"prec={val_metrics['precision']:.3f} rec={val_metrics['recall']:.3f} "
             f"f1={val_metrics['f1']:.3f} spk={val_metrics['spk_per_sample']:.1f}"
         )
         history.append({"epoch": epoch + 1, "train": train_metrics, "val": val_metrics})
@@ -172,7 +198,7 @@ def evaluate_model(
     loader: DataLoader,
     device: str,
     timesteps: int,
-) -> Dict[str, float]:
+) -> Dict[str, float | list[list[int]]]:
     return run_epoch(
         model=model,
         loader=loader,
@@ -181,4 +207,5 @@ def evaluate_model(
         timesteps=timesteps,
         log_interval=10,
         train=False,
+        collect_confusion=True,
     )
