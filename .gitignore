@@ -1,0 +1,28 @@
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editors and OS
+.DS_Store
+*.swp
+*.swo
+
+# Secrets
+.kaggle/
+.env
+
+# Large data/artifacts
+data/
+logs/
+outputs/
+*.ckpt
+*.pt
+*.pth
+*.h5
+*.onnx
